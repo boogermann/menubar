@@ -16,18 +16,19 @@ module.exports = function create (opts) {
   if (!opts.dir) opts.dir = app.getAppPath()
   if (!(path.isAbsolute(opts.dir))) opts.dir = path.resolve(opts.dir)
   if (!opts.index) opts.index = 'file://' + path.join(opts.dir, 'index.html')
-  if (!opts['window-position']) opts['window-position'] = (process.platform === 'win32') ? 'trayBottomCenter' : 'trayCenter'
-  if (typeof opts['show-dock-icon'] === 'undefined') opts['show-dock-icon'] = false
+  if (!opts.windowPosition) opts.windowPosition = (process.platform === 'win32') ? 'trayBottomCenter' : 'trayCenter'
+  if (typeof opts.showDockIcon === 'undefined') opts.showDockIcon = false
 
   // set width/height on opts to be usable before the window is created
   opts.width = opts.width || 400
   opts.height = opts.height || 400
   opts.tooltip = opts.tooltip || ''
 
-  app.on('ready', appReady)
-
   var menubar = new events.EventEmitter()
   menubar.app = app
+
+  if (app.isReady()) appReady()
+  else app.on('ready', appReady)
 
   // Set / get options
   menubar.setOption = function (opt, val) {
@@ -41,20 +42,26 @@ module.exports = function create (opts) {
   return menubar
 
   function appReady () {
-    if (app.dock && !opts['show-dock-icon']) app.dock.hide()
+    if (app.dock && !opts.showDockIcon) app.dock.hide()
 
     var iconPath = opts.icon || path.join(opts.dir, 'IconTemplate.png')
     if (!fs.existsSync(iconPath)) iconPath = path.join(__dirname, 'example', 'IconTemplate.png') // default cat icon
 
     var cachedBounds // cachedBounds are needed for double-clicked event
-    var defaultClickEvent = opts['show-on-right-click'] ? 'right-click' : 'click'
+    var defaultClickEvent = opts.showOnRightClick ? 'right-click' : 'click'
 
     menubar.tray = opts.tray || new Tray(iconPath)
     menubar.tray.on(defaultClickEvent, clicked)
     menubar.tray.on('double-click', clicked)
     menubar.tray.setToolTip(opts.tooltip)
 
-    if (opts.preloadWindow || opts['preload-window']) {
+    var supportsTrayHighlightState = false
+    try {
+      menubar.tray.setHighlightMode('never')
+      supportsTrayHighlightState = true
+    } catch (e) {}
+
+    if (opts.preloadWindow) {
       createWindow()
     }
 
@@ -81,13 +88,11 @@ module.exports = function create (opts) {
 
       menubar.positioner = new Positioner(menubar.window)
 
-      if (!opts['always-on-top']) {
-        menubar.window.on('blur', hideWindow)
-      } else {
-        menubar.window.on('blur', emitBlur)
-      }
+      menubar.window.on('blur', function () {
+        opts.alwaysOnTop ? emitBlur() : hideWindow()
+      })
 
-      if (opts['show-on-all-workspaces'] !== false) {
+      if (opts.showOnAllWorkspaces !== false) {
         menubar.window.setVisibleOnAllWorkspaces(true)
       }
 
@@ -97,6 +102,7 @@ module.exports = function create (opts) {
     }
 
     function showWindow (trayPos) {
+      if (supportsTrayHighlightState) menubar.tray.setHighlightMode('always')
       if (!menubar.window) {
         createWindow()
       }
@@ -109,15 +115,18 @@ module.exports = function create (opts) {
       } else if (cachedBounds) {
         // Cached value will be used if showWindow is called without bounds data
         trayPos = cachedBounds
+      } else if (menubar.tray.getBounds) {
+        // Get the current tray bounds
+        trayPos = menubar.tray.getBounds()
       }
 
       // Default the window to the right if `trayPos` bounds are undefined or null.
       var noBoundsPosition = null
-      if ((trayPos === undefined || trayPos.x === 0) && opts['window-position'].substr(0, 4) === 'tray') {
+      if ((trayPos === undefined || trayPos.x === 0) && opts.windowPosition.substr(0, 4) === 'tray') {
         noBoundsPosition = (process.platform === 'win32') ? 'bottomRight' : 'topRight'
       }
 
-      var position = menubar.positioner.calculate(noBoundsPosition || opts['window-position'], trayPos)
+      var position = menubar.positioner.calculate(noBoundsPosition || opts.windowPosition, trayPos)
 
       var x = (opts.x !== undefined) ? opts.x : position.x
       var y = (opts.y !== undefined) ? opts.y : position.y
@@ -129,6 +138,7 @@ module.exports = function create (opts) {
     }
 
     function hideWindow () {
+      if (supportsTrayHighlightState) menubar.tray.setHighlightMode('never')
       if (!menubar.window) return
       menubar.emit('hide')
       menubar.window.hide()
